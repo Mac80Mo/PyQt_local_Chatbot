@@ -34,8 +34,9 @@ class ChatController:
 
         self._worker = LLMWorker(self.model_name, list(self.history))
         self._worker.token_received.connect(self._append_token)
-        self._worker.finished.connect(self._on_finished)
+        self._worker.response_ready.connect(self._on_finished)
         self._worker.error_occurred.connect(self._on_error)
+        self._worker.finished.connect(self._worker.deleteLater)  # sicheres Qt-Cleanup
         self._worker.start()
 
     def handle_cancel(self):
@@ -62,14 +63,14 @@ class ChatController:
         self.history.append({"role": "assistant", "content": full_response})
         self.view.chat_display.append("")  # Leerzeile als Trenner
         self._set_busy(False)
-        self._worker = None
+        # Kein self._worker = None hier — deleteLater() übernimmt das Cleanup
 
     def _on_error(self, message: str):
         self.view.chat_display.append(
             f"<br><span style='color:red'><b>Fehler:</b> {message}</span>"
         )
         self._set_busy(False)
-        self._worker = None
+        # Kein self._worker = None hier — deleteLater() übernimmt das Cleanup
 
     def _set_busy(self, busy: bool):
         self.view.send_button.setEnabled(not busy)
