@@ -14,10 +14,12 @@ class MainWindow(QMainWindow):
         # --- Chatverlauf ---
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
+        self.chat_display.setStyleSheet("border: 1px solid #555555;")
         self.chat_display.setPlaceholderText("Chatverlauf erscheint hier...")
 
         # --- Eingabefeld ---
         self.input_field = QLineEdit()
+        self.input_field.setStyleSheet("border: 1px solid #E4E4C9;")
         self.input_field.setPlaceholderText("Nachricht eingeben...")
 
         # --- Buttons ---
