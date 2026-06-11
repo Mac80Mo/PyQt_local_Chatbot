@@ -1,5 +1,5 @@
 from PyQt6.QtGui import QTextCursor
-from model.llm_model import LLMWorker, list_local_models
+from model.llm_model import LLMWorker, list_local_models, get_model_context_size
 
 
 class ChatController:
@@ -10,6 +10,7 @@ class ChatController:
         self.history: list[dict] = []
         self._worker: LLMWorker | None = None
         self._is_busy: bool = False
+        self._num_ctx: int = 4096
 
         # Verfuegbare Modelle laden und Selector befuellen
         models = list_local_models()
@@ -22,6 +23,7 @@ class ChatController:
         else:
             self.view.model_selector.addItem("Kein Modell gefunden")
             self.view.model_selector.setEnabled(False)
+            self.view.num_ctx_spinner.setEnabled(False)
             self.model_name = ""
 
         # Signale der View verdrahten
@@ -29,6 +31,13 @@ class ChatController:
         self.view.input_field.returnPressed.connect(self.handle_send)
         self.view.cancel_button.clicked.connect(self.handle_cancel)
         self.view.model_selector.currentTextChanged.connect(self._on_model_changed)
+        self.view.num_ctx_spinner.valueChanged.connect(self._on_num_ctx_changed)
+
+        # Initialen num_ctx setzen – loest valueChanged aus und synchronisiert Balken
+        if self.model_name:
+            self.view.num_ctx_spinner.setValue(get_model_context_size(self.model_name))
+        else:
+            self._on_num_ctx_changed(self._num_ctx)
 
     # ------------------------------------------------------------------
     # Öffentliche Slots
@@ -46,10 +55,11 @@ class ChatController:
 
         self._set_busy(True)
 
-        self._worker = LLMWorker(self.model_name, list(self.history))
+        self._worker = LLMWorker(self.model_name, list(self.history), self._num_ctx)
         self._worker.token_received.connect(self._append_token)
         self._worker.response_ready.connect(self._on_finished)
         self._worker.error_occurred.connect(self._on_error)
+        self._worker.context_used.connect(self._update_context_bar)
         self._worker.finished.connect(self._worker.deleteLater)  # sicheres Qt-Cleanup
         self._worker.start()
 
@@ -63,6 +73,7 @@ class ChatController:
         else:
             self.view.chat_display.clear()
             self.history.clear()
+            self.view.context_bar.setValue(0)
 
     # ------------------------------------------------------------------
     # Private Helfer
@@ -71,6 +82,14 @@ class ChatController:
     def _on_model_changed(self, model_name: str):
         """Wird aufgerufen, wenn der Benutzer ein anderes Modell auswaehlt."""
         self.model_name = model_name
+        # Spinner-Wert auf Modell-Default setzen; valueChanged synchronisiert den Rest
+        self.view.num_ctx_spinner.setValue(get_model_context_size(model_name))
+
+    def _on_num_ctx_changed(self, value: int):
+        """Wird aufgerufen, wenn der Nutzer den Kontext-Spinner aendert."""
+        self._num_ctx = value
+        self.view.context_bar.setMaximum(value)
+        self.view.context_bar.setValue(0)
 
     def _append_token(self, token: str):
         """Token direkt ans Ende des Displays anhängen (kein extra Zeilenumbruch)."""
@@ -92,6 +111,10 @@ class ChatController:
         )
         self._set_busy(False)
         # Kein self._worker = None hier — deleteLater() uebernimmt das Cleanup
+
+    def _update_context_bar(self, used: int):
+        """Aktualisiert den Kontext-Balken mit der Anzahl verbrauchter Tokens."""
+        self.view.context_bar.setValue(used)
 
     def _set_busy(self, busy: bool):
         self._is_busy = busy
