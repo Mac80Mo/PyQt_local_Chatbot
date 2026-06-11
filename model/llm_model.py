@@ -2,6 +2,15 @@ import ollama
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
+def list_local_models() -> list[str]:
+    """Gibt die Namen aller lokal per Ollama installierten Modelle zurueck."""
+    try:
+        result = ollama.list()
+        return [m.model for m in result.models]
+    except Exception:
+        return []
+
+
 class LLMWorker(QThread):
     """Führt den Ollama-API-Aufruf im Hintergrund-Thread aus (Streaming)."""
 

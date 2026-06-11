@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout,
     QTextEdit, QLineEdit, QPushButton,
+    QComboBox, QLabel, QToolBar,
 )
 
 
@@ -10,6 +11,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Chatbot")
         self.setMinimumSize(600, 500)
+
+        # --- Toolbar mit Modellauswahl ---
+        toolbar = QToolBar("Modellauswahl")
+        toolbar.setMovable(False)
+        self.addToolBar(toolbar)
+
+        toolbar.addWidget(QLabel("Modell: "))
+        self.model_selector = QComboBox()
+        self.model_selector.setMinimumWidth(200)
+        toolbar.addWidget(self.model_selector)
 
         # --- Chatverlauf ---
         self.chat_display = QTextEdit()

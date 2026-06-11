@@ -7,6 +7,6 @@ from controller.chat_controller import ChatController
 
 app = QApplication(sys.argv)
 window = MainWindow()
-controller = ChatController(window, model_name="llama3.2:3b")
+controller = ChatController(window)
 window.show()
 app.exec()
