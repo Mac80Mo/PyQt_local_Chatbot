@@ -9,6 +9,7 @@ class ChatController:
         self.view = view
         self.history: list[dict] = []
         self._worker: LLMWorker | None = None
+        self._is_busy: bool = False
 
         # Verfuegbare Modelle laden und Selector befuellen
         models = list_local_models()
@@ -53,12 +54,15 @@ class ChatController:
         self._worker.start()
 
     def handle_cancel(self):
-        if self._worker and self._worker.isRunning():
-            self._worker.terminate()
-            self._worker.wait()
+        if self._is_busy:
+            if self._worker:
+                self._worker.terminate()
+                self._worker.wait()
             self.view.chat_display.append("<br><i>[Abgebrochen]</i>")
-        self._set_busy(False)
-        self._worker = None
+            self._set_busy(False)
+        else:
+            self.view.chat_display.clear()
+            self.history.clear()
 
     # ------------------------------------------------------------------
     # Private Helfer
@@ -80,16 +84,17 @@ class ChatController:
         self.history.append({"role": "assistant", "content": full_response})
         self.view.chat_display.append("")  # Leerzeile als Trenner
         self._set_busy(False)
-        # Kein self._worker = None hier — deleteLater() übernimmt das Cleanup
+        # Kein self._worker = None hier — deleteLater() uebernimmt das Cleanup
 
     def _on_error(self, message: str):
         self.view.chat_display.append(
             f"<br><span style='color:red'><b>Fehler:</b> {message}</span>"
         )
         self._set_busy(False)
-        # Kein self._worker = None hier — deleteLater() übernimmt das Cleanup
+        # Kein self._worker = None hier — deleteLater() uebernimmt das Cleanup
 
     def _set_busy(self, busy: bool):
+        self._is_busy = busy
         self.view.send_button.setEnabled(not busy)
-        self.view.cancel_button.setEnabled(busy)
+        self.view.cancel_button.setText("Abbrechen" if busy else "Chat löschen")
         self.view.input_field.setEnabled(not busy)

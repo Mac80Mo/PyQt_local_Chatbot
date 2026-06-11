@@ -37,8 +37,7 @@ class MainWindow(QMainWindow):
         self.send_button = QPushButton("Senden")
         self.send_button.setDefault(True)
 
-        self.cancel_button = QPushButton("Abbrechen")
-        self.cancel_button.setEnabled(False)  # nur aktiv während LLM antwortet
+        self.cancel_button = QPushButton("Chat löschen")
 
         # --- Button-Layout (Eingabe + Buttons nebeneinander) ---
         button_layout = QHBoxLayout()
