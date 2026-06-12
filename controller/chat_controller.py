@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from PyQt6.QtGui import QTextCursor
 from model.llm_model import LLMWorker, list_local_models
 
@@ -7,9 +10,10 @@ class ChatController:
 
     def __init__(self, view, model_name: str = ""):
         self.view = view
-        self.history: list[dict] = []
+
         self._worker: LLMWorker | None = None
         self._is_busy: bool = False
+        self.history: list[dict] = self._build_initial_history()
 
         # Verfuegbare Modelle laden und Selector befuellen
         models = list_local_models()
@@ -62,11 +66,20 @@ class ChatController:
             self._set_busy(False)
         else:
             self.view.chat_display.clear()
-            self.history.clear()
+            self.history = self._build_initial_history()
 
     # ------------------------------------------------------------------
     # Private Helfer
     # ------------------------------------------------------------------
+
+    def _build_initial_history(self) -> list[dict]:
+        """Erstellt die initiale Nachrichtenhistorie mit einem System-Prompt."""
+        jetzt = datetime.now(tz=ZoneInfo("Europe/Berlin"))
+        inhalt = (
+            f"Das aktuelle Datum ist {jetzt.strftime('%d.%m.%Y')}, "
+            f"die Uhrzeit ist {jetzt.strftime('%H:%M')} Uhr ({jetzt.strftime('%Z')})."
+        )
+        return [{"role": "system", "content": inhalt}]
 
     def _on_model_changed(self, model_name: str):
         """Wird aufgerufen, wenn der Benutzer ein anderes Modell auswaehlt."""
