@@ -81,6 +81,7 @@ class ChatController:
             self._query_worker.start()
         else:
             self.view.chat_display.append(f"<b>Du:</b> {escaped_text}<br><b>Bot:</b> ")
+            self.history[0] = self._build_initial_history()[0]
             self.history.append({"role": "user", "content": text})
             self._start_llm_worker()
 
