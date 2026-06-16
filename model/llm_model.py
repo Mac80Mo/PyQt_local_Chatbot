@@ -3,10 +3,21 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 
 def list_local_models() -> list[str]:
-    """Gibt die Namen aller lokal per Ollama installierten Modelle zurueck."""
+    """Gibt nur Chat-Modelle zurueck – Embedding-Modelle werden herausgefiltert."""
     try:
         result = ollama.list()
-        return [m.model for m in result.models]
+        chat_models = []
+        for m in result.models:
+            try:
+                if not m.model:
+                    continue
+                info = ollama.show(m.model)
+                if info.modelinfo and info.modelinfo.get("general.type") == "model":
+                    chat_models.append(m.model)
+            except Exception:
+                # Im Zweifel aufnehmen, damit kein Modell verloren geht
+                chat_models.append(m.model)
+        return chat_models
     except Exception:
         return []
 
