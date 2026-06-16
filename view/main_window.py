@@ -75,6 +75,8 @@ class MainWindow(QMainWindow):
         details_layout.setContentsMargins(0, 0, 0, 0)
 
         self.add_file_button = QPushButton("Datei hinzufügen")
+        self.add_folder_button = QPushButton("Ordner hinzufügen")
+        self.rag_memory_toggle = QCheckBox("Gesprächsverlauf merken")
         self.document_list = QListWidget()
         self.document_list.setToolTip("Indexierte Dokumente")
         self.delete_doc_button = QPushButton("Ausgewähltes entfernen")
@@ -83,6 +85,8 @@ class MainWindow(QMainWindow):
         self.rag_status_label.setStyleSheet("color: #888888; font-size: 11px;")
 
         details_layout.addWidget(self.add_file_button)
+        details_layout.addWidget(self.add_folder_button)
+        details_layout.addWidget(self.rag_memory_toggle)
         details_layout.addWidget(QLabel("Indexierte Dateien:"))
         details_layout.addWidget(self.document_list)
         details_layout.addWidget(self.delete_doc_button)
@@ -91,8 +95,12 @@ class MainWindow(QMainWindow):
 
         self._rag_details_container.setVisible(False)
 
+        self.rag_size_label = QLabel("Speicher: – KB")
+        self.rag_size_label.setStyleSheet("color: #888888; font-size: 11px;")
+
         rag_layout.addWidget(QLabel("<b>RAG-Wissensbasis</b>"))
         rag_layout.addWidget(self.rag_toggle)
+        rag_layout.addWidget(self.rag_size_label)
         rag_layout.addWidget(self._rag_details_button)
         rag_layout.addWidget(self._rag_details_container)
         rag_layout.addStretch()

@@ -2,8 +2,11 @@ import ollama
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
+_EMBEDDING_ARCHITECTURES: frozenset[str] = frozenset({"bert", "nomic-bert"})
+
+
 def list_local_models() -> list[str]:
-    """Gibt nur Chat-Modelle zurueck – Embedding-Modelle werden herausgefiltert."""
+    """Gibt nur Chat-Modelle zurueck – Embedding-Modelle werden anhand der Architektur herausgefiltert."""
     try:
         result = ollama.list()
         chat_models = []
@@ -12,8 +15,10 @@ def list_local_models() -> list[str]:
                 if not m.model:
                     continue
                 info = ollama.show(m.model)
-                if info.modelinfo and info.modelinfo.get("general.type") == "model":
-                    chat_models.append(m.model)
+                arch = (info.modelinfo or {}).get("general.architecture", "")
+                if str(arch).lower() in _EMBEDDING_ARCHITECTURES:
+                    continue
+                chat_models.append(m.model)
             except Exception:
                 # Im Zweifel aufnehmen, damit kein Modell verloren geht
                 chat_models.append(m.model)

@@ -1,11 +1,12 @@
+import html
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from model.llm_model import LLMWorker, list_local_models
-from model.rag_model import RAGStore
-from model.rag_worker import IndexWorker, QueryWorker
+from model.rag_model import RAGStore, list_supported_files
+from model.rag_worker import IndexWorker, FolderIndexWorker, QueryWorker
 
 
 class ChatController:
@@ -15,10 +16,13 @@ class ChatController:
         self.view = view
 
         self._worker: LLMWorker | None = None
-        self._index_worker: IndexWorker | None = None
+        self._index_worker: IndexWorker | FolderIndexWorker | None = None
         self._query_worker: QueryWorker | None = None
         self._pending_query_text: str = ""
         self._is_busy: bool = False
+        self._rag_turn_active: bool = False
+        self._folder_total_count: int = 0
+        self._folder_indexed_count: int = 0
         self.history: list[dict] = self._build_initial_history()
 
         # RAG-Speicher initialisieren
@@ -43,6 +47,7 @@ class ChatController:
         self.view.cancel_button.clicked.connect(self.handle_cancel)
         self.view.model_selector.currentTextChanged.connect(self._on_model_changed)
         self.view.add_file_button.clicked.connect(self.handle_file_add)
+        self.view.add_folder_button.clicked.connect(self.handle_folder_add)
         self.view.delete_doc_button.clicked.connect(self.handle_delete_document)
         self.view.clear_store_button.clicked.connect(self.handle_clear_store)
         self.view.closing.connect(self._on_closing)
@@ -60,28 +65,33 @@ class ChatController:
             return
 
         self.view.input_field.clear()
-        self.view.chat_display.append(f"<b>Du:</b> {text}<br><b>Bot:</b> ")
+        escaped_text = html.escape(text)
         self._set_busy(True)
 
         if self.view.rag_toggle.isChecked():
             # RAG-Query im Hintergrund-Thread, um den UI-Thread nicht zu blockieren.
+            # Bot:-Label wird erst nach dem Query durch den jeweiligen Handler gesetzt.
+            self.view.chat_display.append(f"<b>Du:</b> {escaped_text}")
             self._pending_query_text = text
-            self.view.rag_status_label.setText("Suche läuft…")
+            self.view.rag_status_label.setText("Suche läuft\u2026")
             self._query_worker = QueryWorker(self._rag_store, text)
             self._query_worker.query_finished.connect(self._on_query_finished)
             self._query_worker.error_occurred.connect(self._on_query_error)
             self._query_worker.finished.connect(lambda: setattr(self, '_query_worker', None))
             self._query_worker.start()
         else:
+            self.view.chat_display.append(f"<b>Du:</b> {escaped_text}<br><b>Bot:</b> ")
             self.history.append({"role": "user", "content": text})
             self._start_llm_worker()
 
     def handle_cancel(self):
         if self._is_busy:
             if self._query_worker and self._query_worker.isRunning():
-                self._query_worker.terminate()
+                self._query_worker.requestInterruption()
                 self._query_worker.wait()
             if self._worker:
+                # terminate() ist notwendig, da der Ollama-Stream keine sanfte
+                # Unterbrechung ueber requestInterruption() unterstuetzt.
                 self._worker.terminate()
                 self._worker.wait()
             self.view.chat_display.append("<br><i>[Abgebrochen]</i>")
@@ -103,9 +113,35 @@ class ChatController:
         if not path:
             return
         self.view.rag_status_label.setText("Wird indexiert…")
-        self.view.add_file_button.setEnabled(False)
+        self._set_add_buttons_enabled(False)
         self._index_worker = IndexWorker(self._rag_store, path)
         self._index_worker.indexing_finished.connect(self._on_indexing_finished)
+        self._index_worker.error_occurred.connect(self._on_indexing_error)
+        self._index_worker.finished.connect(lambda: setattr(self, '_index_worker', None))
+        self._index_worker.start()
+
+    def handle_folder_add(self):
+        """Öffnet den Ordnerdialog und indexiert alle unterstützten Dateien."""
+        if self._index_worker and self._index_worker.isRunning():
+            return
+        folder = QFileDialog.getExistingDirectory(
+            self.view,
+            "Ordner hinzufügen",
+            "",
+        )
+        if not folder:
+            return
+        dateien = list_supported_files(folder)
+        if not dateien:
+            self.view.rag_status_label.setText("Keine unterstützten Dateien gefunden")
+            return
+        self._folder_total_count = len(dateien)
+        self._folder_indexed_count = 0
+        self.view.rag_status_label.setText(f"0 / {self._folder_total_count} indexiert…")
+        self._set_add_buttons_enabled(False)
+        self._index_worker = FolderIndexWorker(self._rag_store, dateien)
+        self._index_worker.file_indexed.connect(self._on_folder_file_indexed)
+        self._index_worker.folder_indexing_finished.connect(self._on_folder_indexing_finished)
         self._index_worker.error_occurred.connect(self._on_indexing_error)
         self._index_worker.finished.connect(lambda: setattr(self, '_index_worker', None))
         self._index_worker.start()
@@ -145,32 +181,59 @@ class ChatController:
     def _on_query_finished(self, chunks: list):
         """Wird aufgerufen, wenn der RAG-Query-Worker ein Ergebnis liefert."""
         text = self._pending_query_text
+        verlauf_merken = self.view.rag_memory_toggle.isChecked()
         if chunks:
-            # Sliding-Window: nur der aktuelle Turn enthaelt Kontext,
-            # aeltere Turns bleiben unveraendert.
-            kontext = "\n---\n".join(chunks)
+            # Bei deaktiviertem Verlauf: Wegwerf-History (nur System-Prompt + aktueller Turn).
+            # Bei aktiviertem Verlauf: persistente History wie im normalen Chat.
+            # Das aktuelle Datum steht bereits im System-Prompt und wird hier nicht wiederholt.
+            kontext_bloecke = []
+            for chunk in chunks:
+                quelle = f"[Quelle: {chunk['filename']} | Datum: {chunk['file_date']}]"
+                kontext_bloecke.append(f"{quelle}\n{chunk['text']}")
+            kontext = "\n---\n".join(kontext_bloecke)
             user_content = (
-                f"Nutze folgende Kontext-Informationen zur Beantwortung der Frage:\n\n"
+                f"Beantworte die folgende Frage auf Basis der bereitgestellten Kontext-Informationen.\n"
+                f"Erfinde keine Inhalte und ergänze nichts aus eigenem Wissen.\n"
+                f"Ausnahme: Das aktuelle Datum und die aktuelle Uhrzeit sind im System-Prompt hinterlegt "
+                f"und dürfen direkt verwendet werden, wenn die Frage danach fragt.\n"
+                f"Wenn die Antwort weder aus dem Kontext noch aus dem System-Prompt hervorgeht, "
+                f"antworte mit: 'Dazu liegen mir keine Informationen vor.'\n"
+                f"Jeder Abschnitt beginnt mit der Quelldatei und deren Datum.\n\n"
                 f"{kontext}\n\nFrage: {text}"
             )
         else:
             user_content = text
-        self.history.append({"role": "user", "content": user_content})
-        self._refresh_document_list()  # Aktualisiert rag_status_label
-        self._start_llm_worker()
+        self.view.chat_display.append("<b>Bot:</b> ")
+        if verlauf_merken:
+            self.history.append({"role": "user", "content": user_content})
+            self._rag_turn_active = False
+            self._refresh_document_list()
+            self._start_llm_worker()
+        else:
+            rag_history = self._build_initial_history() + [{"role": "user", "content": user_content}]
+            self._rag_turn_active = True
+            self._refresh_document_list()
+            self._start_llm_worker(rag_history)
 
     def _on_query_error(self, message: str):
         """Wird aufgerufen, wenn der RAG-Query fehlschlaegt. LLM laeuft ohne Kontext weiter."""
         self.view.chat_display.append(
             f"<br><span style='color:orange'><b>RAG-Warnung:</b> {message}</span><br><b>Bot:</b> "
         )
-        self.history.append({"role": "user", "content": self._pending_query_text})
-        self._refresh_document_list()
-        self._start_llm_worker()
+        if self.view.rag_memory_toggle.isChecked():
+            self.history.append({"role": "user", "content": self._pending_query_text})
+            self._rag_turn_active = False
+            self._refresh_document_list()
+            self._start_llm_worker()
+        else:
+            rag_history = self._build_initial_history() + [{"role": "user", "content": self._pending_query_text}]
+            self._rag_turn_active = True
+            self._refresh_document_list()
+            self._start_llm_worker(rag_history)
 
-    def _start_llm_worker(self):
-        """Startet den LLM-Worker mit der aktuellen History."""
-        self._worker = LLMWorker(self.model_name, self.history)
+    def _start_llm_worker(self, history: list[dict] | None = None):
+        """Startet den LLM-Worker mit der angegebenen oder der gespeicherten History."""
+        self._worker = LLMWorker(self.model_name, history if history is not None else self.history)
         self._worker.token_received.connect(self._append_token)
         self._worker.response_ready.connect(self._on_finished)
         self._worker.error_occurred.connect(self._on_error)
@@ -199,7 +262,10 @@ class ChatController:
         self.view.chat_display.ensureCursorVisible()
 
     def _on_finished(self, full_response: str):
-        self.history.append({"role": "assistant", "content": full_response})
+        if self._rag_turn_active:
+            self._rag_turn_active = False
+        else:
+            self.history.append({"role": "assistant", "content": full_response})
         self.view.chat_display.append("")  # Leerzeile als Trenner
         self._set_busy(False)
 
@@ -218,18 +284,39 @@ class ChatController:
     def _on_indexing_finished(self, filename: str):
         # _refresh_document_list aktualisiert auch explizit rag_status_label.
         self._refresh_document_list()
-        self.view.add_file_button.setEnabled(True)
+        self._set_add_buttons_enabled(True)
+
+    def _on_folder_file_indexed(self, filename: str):
+        """Wird nach jeder erfolgreich indexierten Ordner-Datei aufgerufen."""
+        self._folder_indexed_count += 1
+        self.view.rag_status_label.setText(
+            f"{self._folder_indexed_count} / {self._folder_total_count} indexiert…"
+        )
+
+    def _on_folder_indexing_finished(self, erfolgreich: int, gesamt: int):
+        """Wird aufgerufen, wenn alle Ordner-Dateien verarbeitet wurden."""
+        self._refresh_document_list()
+        self._set_add_buttons_enabled(True)
+        self.view.rag_status_label.setText(
+            f"{erfolgreich} von {gesamt} Dateien indexiert"
+        )
 
     def _on_indexing_error(self, message: str):
         self.view.rag_status_label.setText("Fehler beim Indexieren")
         self.view.chat_display.append(
             f"<br><span style='color:red'><b>RAG-Fehler:</b> {message}</span>"
         )
-        self.view.add_file_button.setEnabled(True)
+        self._set_add_buttons_enabled(True)
+
+    def _set_add_buttons_enabled(self, enabled: bool):
+        """Aktiviert oder deaktiviert beide Hinzufuegen-Buttons gleichzeitig."""
+        self.view.add_file_button.setEnabled(enabled)
+        self.view.add_folder_button.setEnabled(enabled)
 
     def _on_closing(self):
         """Beendet laufende Hintergrund-Threads vor dem Schließen der Anwendung."""
         if self._query_worker and self._query_worker.isRunning():
+            # terminate() ist akzeptabel: der Prozess wird beendet, Datenverlust ist ausgeschlossen.
             self._query_worker.terminate()
             self._query_worker.wait()
         if self._index_worker and self._index_worker.isRunning():
@@ -237,7 +324,7 @@ class ChatController:
             self._index_worker.wait()
 
     def _refresh_document_list(self):
-        """Aktualisiert die Dokumentenliste und das Status-Label."""
+        """Aktualisiert die Dokumentenliste, das Status-Label und die Speichergrößen-Anzeige."""
         documents = self._rag_store.list_documents()
         self.view.document_list.clear()
         self.view.document_list.addItems(documents)
@@ -245,3 +332,9 @@ class ChatController:
         self.view.rag_status_label.setText(
             f"{count} Dokument{'e' if count != 1 else ''} indexiert"
         )
+        groesse = self._rag_store.get_store_size_bytes()
+        if groesse < 1024 * 1024:
+            anzeige = f"Speicher: {groesse / 1024:.1f} KB"
+        else:
+            anzeige = f"Speicher: {groesse / (1024 * 1024):.2f} MB"
+        self.view.rag_size_label.setText(anzeige)
