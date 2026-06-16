@@ -40,6 +40,27 @@ view/
     main_window.py      # PyQt6-Benutzeroberfläche
 ```
 
+## RAG (Retrieval-Augmented Generation)
+
+Dokumente können lokal indexiert und als Kontext in Anfragen eingebunden werden.
+
+**Unterstützte Formate:** `.txt`, `.md`, `.pdf`, `.docx`
+
+**Funktionsweise:**
+- Dokumente werden in Chunks (800 Zeichen, 100 Überlappung) aufgeteilt und als Vektoren in ChromaDB gespeichert.
+- Embeddings werden über Ollama erzeugt (Standardmodell: `nomic-embed-text`).
+- Pro Anfrage werden die 6 relevantesten Chunks abgerufen und dem Prompt vorangestellt.
+- Datumsangaben im Dateinamen oder in der Anfrage werden als Filter ausgewertet.
+- Indexierung läuft im Hintergrund-Thread, ohne die UI zu blockieren.
+
+**Embedding-Modell herunterladen:**
+
+```bash
+ollama pull nomic-embed-text
+```
+
+Der Vektorspeicher wird persistent unter `~/.local/share/pyqt-chatbot/chroma_db` abgelegt.
+
 ## Modell wechseln
 
 In `app.py` den Parameter `model_name` anpassen:
